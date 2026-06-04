@@ -1,0 +1,452 @@
+{% extends "base.html" %}
+{% block title %}Inventory — CampusStock{% endblock %}
+
+{% block head %}
+<style>
+  .toolbar {
+    display: flex; align-items: center; gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .search-wrap {
+    position: relative;
+    flex: 1; min-width: 200px;
+  }
+  .search-wrap i { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: .85rem; }
+  .search-wrap input { padding-left: 36px; width: 100%; }
+
+  select.filter-select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: .85rem;
+    outline: none;
+    cursor: pointer;
+  }
+
+  /* Table */
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  thead { background: var(--surface2); }
+  th {
+    padding: 12px 16px;
+    text-align: left;
+    font-size: .72rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    white-space: nowrap;
+  }
+  td { padding: 14px 16px; font-size: .875rem; border-top: 1px solid var(--border); vertical-align: middle; }
+  tr:hover td { background: var(--surface2); }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: .72rem;
+    font-weight: 600;
+  }
+  .badge-available { background: rgba(16,185,129,.12); color: var(--green); }
+  .badge-inuse { background: rgba(59,130,246,.12); color: var(--accent); }
+  .badge-damaged { background: rgba(239,68,68,.12); color: var(--red); }
+
+  .low-qty { color: var(--red); font-weight: 700; }
+
+  .row-actions { display: flex; gap: 6px; }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+  }
+  .empty-state i { font-size: 2.5rem; margin-bottom: 14px; display: block; }
+
+  .pagination {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px;
+    border-top: 1px solid var(--border);
+    font-size: .8rem;
+    color: var(--muted);
+  }
+  .page-btns { display: flex; gap: 6px; }
+  .page-btn {
+    padding: 5px 11px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: .8rem;
+    transition: all .2s;
+  }
+  .page-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .page-btn:hover:not(.active) { border-color: var(--muted); color: var(--text); }
+
+  /* QR Modal */
+  .qr-display { text-align: center; padding: 10px 0; }
+  .qr-display img { border-radius: 12px; max-width: 200px; }
+  .qr-details { margin-top: 16px; font-size: .85rem; }
+  .qr-details table { width: 100%; }
+  .qr-details td { padding: 5px 0; color: var(--muted); }
+  .qr-details td:last-child { color: var(--text); text-align: right; font-weight: 500; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <span class="topbar-title">Inventory</span>
+  <div class="topbar-actions">
+    {% if user.role == 'admin' %}
+    <button class="btn btn-primary btn-sm" onclick="openAdd()"><i class="fas fa-plus"></i> Add Item</button>
+    {% endif %}
+  </div>
+</div>
+<div class="page-content">
+
+  <div class="toolbar">
+    <div class="search-wrap">
+      <i class="fas fa-magnifying-glass"></i>
+      <input type="text" id="searchInput" placeholder="Search items by name or category…" oninput="filterItems()" />
+    </div>
+    <select class="filter-select" id="filterDept" onchange="filterItems()">
+      <option value="">All Departments</option>
+    </select>
+    <select class="filter-select" id="filterStatus" onchange="filterItems()">
+      <option value="">All Statuses</option>
+      <option>Available</option>
+      <option>In Use</option>
+      <option>Damaged</option>
+    </select>
+    <select class="filter-select" id="filterCat" onchange="filterItems()">
+      <option value="">All Categories</option>
+    </select>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Item ID</th>
+          <th>Name</th>
+          <th>Category</th>
+          <th>Department</th>
+          <th>Qty</th>
+          <th>Status</th>
+          <th>Updated</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="itemsBody">
+        <tr><td colspan="8"><div class="empty-state"><i class="fas fa-spinner fa-spin"></i>Loading…</div></td></tr>
+      </tbody>
+    </table>
+    <div class="pagination">
+      <span id="pageInfo"></span>
+      <div class="page-btns" id="pageBtns"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal-overlay" id="itemModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 class="modal-title" id="modalTitle">Add Item</h3>
+      <button class="modal-close" onclick="closeModal('itemModal')"><i class="fas fa-xmark"></i></button>
+    </div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Item ID *</label>
+        <input type="text" id="f-id" placeholder="e.g. ITEM007" />
+      </div>
+      <div class="form-group">
+        <label>Item Name *</label>
+        <input type="text" id="f-name" placeholder="e.g. Dell Laptop" />
+      </div>
+      <div class="form-group">
+        <label>Category *</label>
+        <select id="f-category">
+          <option>Electronics</option>
+          <option>Furniture</option>
+          <option>Lab Equipment</option>
+          <option>Books & Materials</option>
+          <option>Sports Equipment</option>
+          <option>Other</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Department *</label>
+        <select id="f-dept">
+          <option>Computer Science</option>
+          <option>Physics</option>
+          <option>Chemistry</option>
+          <option>Biology</option>
+          <option>Mathematics</option>
+          <option>Administration</option>
+          <option>Library</option>
+          <option>Sports</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Quantity *</label>
+        <input type="number" id="f-qty" min="0" value="1" />
+      </div>
+      <div class="form-group">
+        <label>Low Stock Threshold</label>
+        <input type="number" id="f-threshold" min="1" value="5" />
+      </div>
+      <div class="form-group full">
+        <label>Status *</label>
+        <select id="f-status">
+          <option>Available</option>
+          <option>In Use</option>
+          <option>Damaged</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex; gap:10px; margin-top:22px; justify-content:flex-end;">
+      <button class="btn btn-ghost" onclick="closeModal('itemModal')">Cancel</button>
+      <button class="btn btn-primary" id="saveBtn" onclick="saveItem()"><i class="fas fa-floppy-disk"></i> Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- QR Modal -->
+<div class="modal-overlay" id="qrModal">
+  <div class="modal" style="max-width:360px;">
+    <div class="modal-header">
+      <h3 class="modal-title">QR Code</h3>
+      <button class="modal-close" onclick="closeModal('qrModal')"><i class="fas fa-xmark"></i></button>
+    </div>
+    <div class="qr-display" id="qrContent">
+      <div style="color:var(--muted);padding:30px"><i class="fas fa-spinner fa-spin"></i> Generating…</div>
+    </div>
+    <div style="display:flex; gap:10px; margin-top:16px; justify-content:flex-end;">
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('qrModal')">Close</button>
+      <button class="btn btn-primary btn-sm" id="downloadQr"><i class="fas fa-download"></i> Download</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Confirm -->
+<div class="modal-overlay" id="deleteModal">
+  <div class="modal" style="max-width:380px;">
+    <div class="modal-header">
+      <h3 class="modal-title" style="color:var(--red)"><i class="fas fa-trash"></i> Delete Item</h3>
+      <button class="modal-close" onclick="closeModal('deleteModal')"><i class="fas fa-xmark"></i></button>
+    </div>
+    <p style="font-size:.9rem; color:var(--muted); margin-bottom:22px;">
+      Are you sure you want to delete <strong id="deleteItemName" style="color:var(--text)"></strong>? This action cannot be undone.
+    </p>
+    <div style="display:flex; gap:10px; justify-content:flex-end;">
+      <button class="btn btn-ghost" onclick="closeModal('deleteModal')">Cancel</button>
+      <button class="btn btn-danger" onclick="confirmDelete()"><i class="fas fa-trash"></i> Delete</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const isAdmin = {{ 'true' if user.role == 'admin' else 'false' }};
+  let allItems = [], editId = null, deleteId = null;
+  let currentPage = 1;
+  const PAGE_SIZE = 12;
+
+  async function loadItems() {
+    allItems = await api('/api/items');
+    populateFilters();
+    renderTable();
+  }
+
+  function populateFilters() {
+    const depts = [...new Set(allItems.map(i => i.department).filter(Boolean))].sort();
+    const cats = [...new Set(allItems.map(i => i.category).filter(Boolean))].sort();
+    const deptSel = document.getElementById('filterDept');
+    const catSel = document.getElementById('filterCat');
+    deptSel.innerHTML = '<option value="">All Departments</option>' + depts.map(d => `<option>${d}</option>`).join('');
+    catSel.innerHTML = '<option value="">All Categories</option>' + cats.map(c => `<option>${c}</option>`).join('');
+  }
+
+  function filterItems() {
+    currentPage = 1;
+    renderTable();
+  }
+
+  function getFiltered() {
+    const search = document.getElementById('searchInput').value.toLowerCase();
+    const dept = document.getElementById('filterDept').value;
+    const status = document.getElementById('filterStatus').value;
+    const cat = document.getElementById('filterCat').value;
+    return allItems.filter(i => {
+      if (search && !i.name.toLowerCase().includes(search) && !i.category.toLowerCase().includes(search)) return false;
+      if (dept && i.department !== dept) return false;
+      if (status && i.status !== status) return false;
+      if (cat && i.category !== cat) return false;
+      return true;
+    });
+  }
+
+  function renderTable() {
+    const filtered = getFiltered();
+    const total = filtered.length;
+    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    currentPage = Math.min(currentPage, pages);
+    const start = (currentPage - 1) * PAGE_SIZE;
+    const items = filtered.slice(start, start + PAGE_SIZE);
+
+    document.getElementById('pageInfo').textContent = total === 0 ? 'No items found' :
+      `Showing ${start+1}–${Math.min(start+PAGE_SIZE, total)} of ${total} items`;
+
+    // Pagination
+    const pb = document.getElementById('pageBtns');
+    pb.innerHTML = '';
+    for (let p = 1; p <= pages; p++) {
+      pb.innerHTML += `<button class="page-btn ${p===currentPage?'active':''}" onclick="gotoPage(${p})">${p}</button>`;
+    }
+
+    const tbody = document.getElementById('itemsBody');
+    if (items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><i class="fas fa-box-open"></i>No items found</div></td></tr>`;
+      return;
+    }
+    tbody.innerHTML = items.map(i => {
+      const statusClass = {'Available':'badge-available','In Use':'badge-inuse','Damaged':'badge-damaged'}[i.status] || '';
+      const isLow = i.quantity <= (i.threshold || 5);
+      const qtyHtml = `<span class="${isLow ? 'low-qty' : ''}">${i.quantity}${isLow ? ' ⚠' : ''}</span>`;
+      const actions = `
+        <div class="row-actions">
+          <button class="btn btn-ghost btn-sm btn-icon" title="QR Code" onclick="showQR('${i.id}')"><i class="fas fa-qrcode"></i></button>
+          <button class="btn btn-ghost btn-sm btn-icon" title="Edit" onclick="openEdit('${i.id}')"><i class="fas fa-pen"></i></button>
+          ${isAdmin ? `<button class="btn btn-danger btn-sm btn-icon" title="Delete" onclick="openDelete('${i.id}','${i.name.replace(/'/g,"\\'")}')"><i class="fas fa-trash"></i></button>` : ''}
+        </div>`;
+      return `<tr>
+        <td><code style="font-size:.8rem;color:var(--accent)">${i.id}</code></td>
+        <td><strong>${i.name}</strong></td>
+        <td>${i.category}</td>
+        <td>${i.department}</td>
+        <td>${qtyHtml}</td>
+        <td><span class="badge ${statusClass}">${i.status}</span></td>
+        <td style="color:var(--muted);font-size:.8rem">${i.updated_at || '—'}</td>
+        <td>${actions}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function gotoPage(p) { currentPage = p; renderTable(); }
+
+  // ── Modals ──
+  function openAdd() {
+    editId = null;
+    document.getElementById('modalTitle').textContent = 'Add New Item';
+    document.getElementById('f-id').disabled = false;
+    ['id','name','qty','threshold'].forEach(f => document.getElementById(`f-${f}`).value = '');
+    document.getElementById('f-qty').value = 1;
+    document.getElementById('f-threshold').value = 5;
+    document.getElementById('itemModal').classList.add('open');
+  }
+
+  function openEdit(id) {
+    const item = allItems.find(i => i.id === id);
+    if (!item) return;
+    editId = id;
+    document.getElementById('modalTitle').textContent = 'Edit Item';
+    document.getElementById('f-id').value = id;
+    document.getElementById('f-id').disabled = true;
+    document.getElementById('f-name').value = item.name;
+    document.getElementById('f-category').value = item.category;
+    document.getElementById('f-dept').value = item.department;
+    document.getElementById('f-qty').value = item.quantity;
+    document.getElementById('f-threshold').value = item.threshold || 5;
+    document.getElementById('f-status').value = item.status;
+    document.getElementById('itemModal').classList.add('open');
+  }
+
+  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+  async function saveItem() {
+    const payload = {
+      id: document.getElementById('f-id').value.trim(),
+      name: document.getElementById('f-name').value.trim(),
+      category: document.getElementById('f-category').value,
+      department: document.getElementById('f-dept').value,
+      quantity: +document.getElementById('f-qty').value,
+      threshold: +document.getElementById('f-threshold').value,
+      status: document.getElementById('f-status').value,
+    };
+    if (!payload.name || !payload.id) { showToast('Please fill required fields', 'error'); return; }
+
+    const btn = document.getElementById('saveBtn');
+    btn.disabled = true;
+    let res;
+    if (editId) {
+      res = await api(`/api/items/${editId}`, { method: 'PUT', body: JSON.stringify(payload) });
+    } else {
+      res = await api('/api/items', { method: 'POST', body: JSON.stringify(payload) });
+    }
+    btn.disabled = false;
+    if (res.success) {
+      closeModal('itemModal');
+      showToast(editId ? 'Item updated!' : 'Item added!');
+      loadItems();
+    } else {
+      showToast(res.error || 'Error saving item', 'error');
+    }
+  }
+
+  function openDelete(id, name) {
+    deleteId = id;
+    document.getElementById('deleteItemName').textContent = name;
+    document.getElementById('deleteModal').classList.add('open');
+  }
+
+  async function confirmDelete() {
+    if (!deleteId) return;
+    const res = await api(`/api/items/${deleteId}`, { method: 'DELETE' });
+    closeModal('deleteModal');
+    if (res.success) { showToast('Item deleted'); loadItems(); }
+    else showToast(res.error || 'Error deleting', 'error');
+  }
+
+  // QR
+  async function showQR(id) {
+    document.getElementById('qrContent').innerHTML = '<div style="color:var(--muted);padding:30px;text-align:center"><i class="fas fa-spinner fa-spin"></i> Generating…</div>';
+    document.getElementById('qrModal').classList.add('open');
+    const data = await api(`/api/qr/${id}`);
+    if (data.qr) {
+      const item = data.item;
+      document.getElementById('qrContent').innerHTML = `
+        <img src="${data.qr}" alt="QR" style="max-width:180px;border-radius:10px;border:1px solid var(--border);" />
+        <div class="qr-details">
+          <table>
+            <tr><td>ID</td><td>${item.id}</td></tr>
+            <tr><td>Name</td><td>${item.name}</td></tr>
+            <tr><td>Department</td><td>${item.department}</td></tr>
+            <tr><td>Status</td><td>${item.status}</td></tr>
+          </table>
+        </div>`;
+      document.getElementById('downloadQr').onclick = () => {
+        const a = document.createElement('a');
+        a.href = data.qr;
+        a.download = `qr-${id}.png`;
+        a.click();
+      };
+    }
+  }
+
+  // Auto-open add
+  if (location.search.includes('action=add') && isAdmin) openAdd();
+
+  loadItems();
+</script>
+{% endblock %}

@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Reports — CampusStock{% endblock %}
+
+{% block head %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  .report-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .report-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 22px; }
+  .report-card-title { font-family: var(--font-display); font-size: .9rem; font-weight: 700; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .report-card-title i { color: var(--accent); }
+
+  .summary-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: .875rem; }
+  .summary-row:last-child { border: none; }
+  .summary-row .label { color: var(--muted); }
+  .summary-row .val { font-weight: 600; }
+
+  .export-btn {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 18px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: .875rem;
+    cursor: pointer;
+    transition: all .2s;
+    text-decoration: none;
+  }
+  .export-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .export-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 24px; }
+
+  .stock-table { width: 100%; border-collapse: collapse; font-size: .875rem; }
+  .stock-table th { padding: 10px 14px; text-align: left; font-size: .72rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; background: var(--surface2); }
+  .stock-table td { padding: 11px 14px; border-top: 1px solid var(--border); }
+  .stock-table tr:hover td { background: var(--surface2); }
+  .progress-bar { height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+  .progress-fill { height: 100%; border-radius: 3px; transition: width .4s; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <span class="topbar-title">Reports</span>
+  <div class="topbar-actions">
+    <div class="export-row" style="margin:0">
+      <button class="export-btn" onclick="exportCSV()"><i class="fas fa-file-csv"></i> Export CSV</button>
+      <button class="export-btn" onclick="window.print()"><i class="fas fa-print"></i> Print</button>
+    </div>
+  </div>
+</div>
+<div class="page-content">
+
+  <div class="report-grid">
+    <div class="report-card">
+      <div class="report-card-title"><i class="fas fa-clipboard-list"></i> Inventory Summary</div>
+      <div id="summaryContent"><div style="color:var(--muted)">Loading…</div></div>
+    </div>
+    <div class="report-card">
+      <div class="report-card-title"><i class="fas fa-chart-pie"></i> Category Breakdown</div>
+      <canvas id="catReportChart" height="200"></canvas>
+    </div>
+  </div>
+
+  <div class="report-card" style="margin-bottom:16px">
+    <div class="report-card-title"><i class="fas fa-table-list"></i> Stock Levels by Item</div>
+    <div style="overflow-x:auto;">
+      <table class="stock-table">
+        <thead><tr>
+          <th>Item</th><th>Category</th><th>Department</th><th>Quantity</th><th>Status</th><th>Stock Level</th>
+        </tr></thead>
+        <tbody id="stockBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="report-card">
+    <div class="report-card-title" style="color:var(--red)"><i class="fas fa-triangle-exclamation"></i> Low Stock Items</div>
+    <div id="lowStockReport"><div style="color:var(--muted)">Loading…</div></div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  Chart.defaults.color = '#64748b';
+  Chart.defaults.font.family = "'DM Sans', sans-serif";
+  const COLORS = ['#3b82f6','#06b6d4','#10b981','#f59e0b','#8b5cf6','#ef4444','#f97316'];
+
+  let reportItems = [];
+
+  async function loadReport() {
+    const [stats, items] = await Promise.all([api('/api/stats'), api('/api/items')]);
+    reportItems = items;
+
+    // Summary
+    document.getElementById('summaryContent').innerHTML = `
+      <div class="summary-row"><span class="label">Total Unique Items</span><span class="val">${stats.total_items}</span></div>
+      <div class="summary-row"><span class="label">Total Quantity</span><span class="val">${stats.total_quantity}</span></div>
+      <div class="summary-row"><span class="label">Available</span><span class="val" style="color:var(--green)">${stats.status_counts['Available'] || 0}</span></div>
+      <div class="summary-row"><span class="label">In Use</span><span class="val" style="color:var(--accent)">${stats.status_counts['In Use'] || 0}</span></div>
+      <div class="summary-row"><span class="label">Damaged</span><span class="val" style="color:var(--red)">${stats.status_counts['Damaged'] || 0}</span></div>
+      <div class="summary-row"><span class="label">Low Stock Alerts</span><span class="val" style="color:var(--red)">${stats.low_stock_count}</span></div>
+      <div class="summary-row"><span class="label">Categories</span><span class="val">${Object.keys(stats.categories).length}</span></div>
+    `;
+
+    // Category chart
+    new Chart(document.getElementById('catReportChart'), {
+      type: 'polarArea',
+      data: {
+        labels: Object.keys(stats.categories),
+        datasets: [{ data: Object.values(stats.categories), backgroundColor: COLORS.map(c => c + 'aa'), borderColor: COLORS, borderWidth: 1.5 }]
+      },
+      options: { plugins: { legend: { position: 'right', labels: { boxWidth: 12 } } } }
+    });
+
+    // Stock table
+    const maxQty = Math.max(...items.map(i => i.quantity), 1);
+    const statusColor = { Available: 'var(--green)', 'In Use': 'var(--accent)', Damaged: 'var(--red)' };
+    document.getElementById('stockBody').innerHTML = items.map(i => {
+      const pct = Math.round((i.quantity / maxQty) * 100);
+      const color = i.quantity <= (i.threshold || 5) ? 'var(--red)' : 'var(--green)';
+      return `<tr>
+        <td><strong>${i.name}</strong> <code style="font-size:.7rem;color:var(--muted)">${i.id}</code></td>
+        <td>${i.category}</td>
+        <td>${i.department}</td>
+        <td style="font-weight:700;color:${color}">${i.quantity}</td>
+        <td><span style="color:${statusColor[i.status] || 'var(--muted)'}">● ${i.status}</span></td>
+        <td style="min-width:100px">
+          <div>${pct}%</div>
+          <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;background:${color}"></div></div>
+        </td>
+      </tr>`;
+    }).join('');
+
+    // Low stock
+    if (stats.low_stock.length === 0) {
+      document.getElementById('lowStockReport').innerHTML = '<div style="color:var(--green);padding:10px"><i class="fas fa-circle-check"></i> All items are well-stocked!</div>';
+    } else {
+      document.getElementById('lowStockReport').innerHTML = `
+        <table class="stock-table">
+          <thead><tr><th>Item</th><th>Department</th><th>Qty</th><th>Threshold</th><th>Status</th></tr></thead>
+          <tbody>${stats.low_stock.map(i => `<tr>
+            <td><strong>${i.name}</strong></td>
+            <td>${i.department}</td>
+            <td style="color:var(--red);font-weight:700">${i.quantity}</td>
+            <td>${i.threshold || 5}</td>
+            <td><span style="color:var(--red)">⚠ Reorder Needed</span></td>
+          </tr>`).join('')}</tbody>
+        </table>`;
+    }
+  }
+
+  function exportCSV() {
+    if (!reportItems.length) return;
+    const headers = ['ID','Name','Category','Department','Quantity','Status','Threshold','Created','Updated'];
+    const rows = reportItems.map(i => [i.id, i.name, i.category, i.department, i.quantity, i.status, i.threshold || 5, i.created_at, i.updated_at]);
+    const csv = [headers, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `campus-inventory-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    showToast('CSV exported!');
+  }
+
+  loadReport();
+</script>
+{% endblock %}
